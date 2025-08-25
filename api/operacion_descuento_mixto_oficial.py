@@ -5,24 +5,27 @@ from decimal import Decimal
 from pymongo import MongoClient
 from bson import json_util, ObjectId, CodecOptions
 import pytz
+import traceback
 
-
-
-# Database connection parameters
-SQL_SERVER = '192.168.2.72'
-SQL_DATABASE = 'valvolinerep'
+# Database connection parameters for SQL Server
+SQL_SERVER = '192.168.2.16'
+SQL_DATABASE = 'digalimenta41'
 SQL_USERNAME = 'Test10'
 SQL_PASSWORD = 'Peru2023'
 
 # MongoDB connection parameters
 MONGO_HOST = '192.168.2.49'
-MONGO_PORT = 27019
-MONGO_DATABASE = 'tradde-valvoline'
+MONGO_PORT = 27020
+MONGO_DATABASE = 'tradde-mixtos'
 MONGO_COLLECTION = 'Flex_Mongo_import_promo'
 
-# SQL queries (unchanged)
-SQL_QUERY_1 = """
+# SQL Queries parametrizadas
+SQL_QUERY_IDBONI = """
+SELECT pkid AS IDBoni,rtrim(Codigo) as CodigoPromocion,rtrim(Descripcion) as Descripcion FROM DefinicionDescuento2
+WHERE (Activo=? and codigo like ?)
+"""
 
+SQL_QUERY_1 = """
 select 
     d.PKID as IDBoni,
     RTRIM(D.Codigo) AS CodigoPromocion,
@@ -37,10 +40,9 @@ select
         ELSE DDD.RutaCaracteristicaEstructural
     END AS TABLA,
     rtrim(DDD.ValorDesde) as ValorDesde,
-   case when rtrim(Ddd.condicion)='Entre' then rtrim(DDD.ValorHasta)
-   when rtrim(Ddd.condicion)='>=' then null else null
-     end as ValorHasta
-	,
+    case when rtrim(Ddd.condicion)='Entre' then rtrim(DDD.ValorHasta)
+    when rtrim(Ddd.condicion)='>=' then null else null
+    end as ValorHasta,
     '' as PorCada
 FROM 
     DefinicionDescuento2 D
@@ -49,13 +51,11 @@ INNER JOIN
 INNER JOIN 
     DefinicionReglaDescuento2 DDD ON DDD.IDDefinicionGrupoReglaDescuento = DD.PKID
 WHERE 
-    D.PKID = 600078873 and ddd.TieneReglaExclusion=1
-
-
+    D.PKID = ? and ddd.TieneReglaExclusion=1
 """
 
 SQL_QUERY_2 = """
-	WITH CTE AS (
+WITH CTE AS (
     SELECT  
         d.PKID AS IDBoni,
         DDD.PKID,
@@ -86,7 +86,7 @@ SQL_QUERY_2 = """
                 ELSE rtrim(DDD.RutaCaracteristicaEstructural)
             END 
             ORDER BY DDD.PKID
-        ) AS Orden
+        ) AS Orden, rtrim(ddd.Condicion) as Condicion
     FROM 
         DefinicionDescuento2 D
     INNER JOIN 
@@ -96,15 +96,66 @@ SQL_QUERY_2 = """
         DefinicionReglaDescuento2 DDD 
         ON DDD.IDDefinicionGrupoReglaDescuento = DD.PKID
     WHERE 
-        D.PKID = 600078873 AND DDD.TieneReglaExclusion = 0
-)
+        D.PKID = ? AND DDD.TieneReglaExclusion = 0
+
+    UNION ALL
+
+    SELECT  
+        d.PKID AS IDBoni,
+        DDD.PKID,
+        CASE 
+            WHEN CHARINDEX('/', RTRIM(DDD.RutaCaracteristicaEstructural)) > 0 
+            THEN SUBSTRING(RTRIM(DDD.RutaCaracteristicaEstructural), 
+                           LEN(RTRIM(DDD.RutaCaracteristicaEstructural)) - CHARINDEX('/', REVERSE(RTRIM(DDD.RutaCaracteristicaEstructural))) + 2, 
+                           LEN(RTRIM(DDD.RutaCaracteristicaEstructural)))
+            ELSE rtrim(DDD.RutaCaracteristicaEstructural)
+        END AS TABLA,
+        CASE
+            WHEN rtrim(DDD.ValorDesde) = 'Coleccion' 
+            THEN '[' + ISNULL(
+                STUFF(( 
+                    SELECT ', ' + CONVERT(VARCHAR(100), DDDD.Clave)
+                    FROM DefinicionReglaDescuentoValorIncluidoEn DDDD
+                    WHERE DDDD.IDDefinicionReglaDescuento2 = DDD.PKID
+                    FOR XML PATH('')
+                ), 1, 2, ''), '') + ']'
+            ELSE rtrim(DDD.ValorDesde)
+        END AS ValorDesdeArray,
+        ROW_NUMBER() OVER (PARTITION BY 
+            CASE 
+                WHEN CHARINDEX('/', RTRIM(DDD.RutaCaracteristicaEstructural)) > 0 
+                THEN SUBSTRING(RTRIM(DDD.RutaCaracteristicaEstructural), 
+                               LEN(RTRIM(DDD.RutaCaracteristicaEstructural)) - CHARINDEX('/', REVERSE(RTRIM(DDD.RutaCaracteristicaEstructural))) + 2, 
+                               LEN(RTRIM(DDD.RutaCaracteristicaEstructural)))
+                ELSE rtrim(DDD.RutaCaracteristicaEstructural)
+            END 
+            ORDER BY DDD.PKID
+        ) AS Orden, 
+        CASE WHEN rtrim(ddd.Condicion)='IncluidoEn' THEN 'IncluidoEn' 
+        WHEN rtrim(ddd.Condicion)='NoIncluidoEn' THEN 'NoIncluidoEn' END as Condicion
+    FROM 
+        DefinicionDescuento2 D
+    INNER JOIN 
+        DefinicionGrupoReglaDescuento DD 
+        ON DD.IDDefinicionDescuento2 = D.PKID
+    INNER JOIN 
+        DefinicionReglaDescuento2 DDD 
+        ON DDD.IDDefinicionGrupoReglaDescuento = DD.PKID
+    WHERE 
+        D.PKID = ? AND DDD.TieneReglaExclusion = 1
+        and (CASE 
+            WHEN CHARINDEX('/', RTRIM(DDD.RutaCaracteristicaEstructural)) > 0 
+            THEN SUBSTRING(RTRIM(DDD.RutaCaracteristicaEstructural), 
+                           LEN(RTRIM(DDD.RutaCaracteristicaEstructural)) - CHARINDEX('/', REVERSE(RTRIM(DDD.RutaCaracteristicaEstructural))) + 2, 
+                           LEN(RTRIM(DDD.RutaCaracteristicaEstructural)))
+            ELSE rtrim(DDD.RutaCaracteristicaEstructural)
+        END not in ('Total','CantidadBase'))
+) 
 SELECT *
 FROM CTE
-ORDER BY TABLA, Orden;
+ORDER BY TABLA, Orden
 """
 
-
-# Add the new SQL query for Obsequios
 SQL_QUERY_3 = """
 select 
 d.PKID as IDBoni, rtrim(d.Codigo) as CodigoRegla, '' as CodigoObsequio,
@@ -113,17 +164,9 @@ d.PKID as IDBoni, rtrim(d.Codigo) as CodigoRegla, '' as CodigoObsequio,
     null as CantidadMaximaPorCliente, null as DesdeFecha,
    null as HastaFecha, null as TieneStock, null as Stock,
     null as TieneCantidadPorCliente, null as TieneCantidadMax,
-    null as Entregado, null as PorEntregar,d.PorcentajeDescuento  as Descuento ,'Descuento' as TipoBono
-
+    null as Entregado, null as PorEntregar,d.PorcentajeDescuento as Descuento ,'Descuento' as TipoBono
  from DefinicionDescuento2 d
-where d.pkid = 600078873
-"""
-
-SQL_QUERY_IDBONI = """
-	
-
-	SELECT pkid AS IDBoni,rtrim(Codigo) as CodigoPromocion,rtrim(Descripcion) as Descripcion FROM DefinicionDescuento2
-WHERE (Activo=0 and codigo  like '%lim')
+where d.pkid = ?
 """
 
 # Custom JSON encoder to handle Decimal and ObjectId types
@@ -136,9 +179,7 @@ class CustomJSONEncoder(json.JSONEncoder):
         if isinstance(obj, datetime):
             return obj.isoformat()
         return super(CustomJSONEncoder, self).default(obj)
-        
-        
-        
+
 def connect_to_sql_database():
     conn_str = f'DRIVER={{SQL Server}};SERVER={SQL_SERVER};DATABASE={SQL_DATABASE};UID={SQL_USERNAME};PWD={SQL_PASSWORD}'
     return pyodbc.connect(conn_str)
@@ -148,9 +189,9 @@ def connect_to_mongodb():
     db = client[MONGO_DATABASE]
     return db[MONGO_COLLECTION]
 
-def execute_query(connection, query):
+def execute_query(connection, query, params):
     cursor = connection.cursor()
-    cursor.execute(query)
+    cursor.execute(query, params)
     columns = [column[0] for column in cursor.description]
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
@@ -188,7 +229,7 @@ def process_results_1(results):
             processed_data[idboni]["QUERYMONGODB"]["$and"].append(mongodb_query)
     
     return processed_data
-    
+
 def process_results_2(results):
     processed_data = {}
     for row in results:
@@ -199,10 +240,51 @@ def process_results_2(results):
         tabla = row['TABLA']
         valor_desde_array = row['ValorDesdeArray']
         orden = row['Orden']
+        condicion = row['Condicion']
         
         mongodb_query = {}
         
-        if tabla in ['Producto', 'Sucursal', 'CategoriaCliente', 'FuerzaVentas', 'Responsable', 'Caracteristica21','Observacion','Marca','ClaseProductoServicio','Caracteristica27','Caracteristica28','Caracteristica29','Caracteristica30','Caracteristica22','Caracteristica23','Caracteristica24','Caracteristica25','Caracteristica26','Caracteristica20','Persona','Credito']:
+        # Manejo especial para Credito (booleano)
+        if tabla == 'Credito':
+            # Convertir string a booleano
+            valor_booleano = valor_desde_array.lower() == 'true'
+            
+            if condicion == "=":
+                mongodb_query = {"Credito": valor_booleano}
+            elif condicion == "<>":
+                mongodb_query = {"Credito": {"$ne": valor_booleano}}
+        
+        # Manejo para campos numéricos con operadores de comparación
+        elif tabla in ['Total', 'Observacion']:
+            try:
+                valor_numerico = float(valor_desde_array)
+                key_map = {
+                    'Total': 'TotalPedido',
+                    'Observacion': 'ObservacionPedido'
+                }
+                
+                if condicion == ">=":
+                    mongodb_query = {key_map[tabla]: {"$gte": valor_numerico}}
+                elif condicion == "<=":
+                    mongodb_query = {key_map[tabla]: {"$lte": valor_numerico}}
+                elif condicion == ">":
+                    mongodb_query = {key_map[tabla]: {"$gt": valor_numerico}}
+                elif condicion == "<":
+                    mongodb_query = {key_map[tabla]: {"$lt": valor_numerico}}
+                elif condicion == "=":
+                    mongodb_query = {key_map[tabla]: valor_numerico}
+                elif condicion == "<>":
+                    mongodb_query = {key_map[tabla]: {"$ne": valor_numerico}}
+            except ValueError:
+                print(f"Error: Unable to convert to numeric value: {valor_desde_array}")
+        
+        # Manejo para campos con arrays (IncluidoEn/NoIncluidoEn)
+        elif tabla in ['Producto', 'Sucursal', 'CategoriaCliente', 'FuerzaVentas', 'Responsable', 
+                       'Caracteristica21', 'Marca', 'ClaseProductoServicio', 'Caracteristica27',
+                       'Caracteristica28', 'Caracteristica29', 'Caracteristica30', 'Caracteristica22',
+                       'Caracteristica23', 'Caracteristica24', 'Caracteristica25', 'Caracteristica26',
+                       'Caracteristica20', 'Persona', 'Proveedor']:
+            
             key_map = {
                 'Producto': 'IDVegaProducto',
                 'Sucursal': 'IDVegaSucursal',
@@ -210,7 +292,6 @@ def process_results_2(results):
                 'FuerzaVentas': 'IDVegaFuerzaVenta',
                 'Responsable': 'IDVegaVendedor',
                 'Caracteristica21': 'ClienteCaracteristica21',
-                'Observacion': 'ObservacionPedido',
                 'Marca': 'IDVegaMarca',
                 'ClaseProductoServicio': 'IDVegaLinea',
                 'Caracteristica27': 'ClienteCaracteristica27',
@@ -224,18 +305,19 @@ def process_results_2(results):
                 'Caracteristica26': 'ClienteCaracteristica26',
                 'Caracteristica20': 'ClienteCaracteristica20',
                 'Persona': 'IDVegaCliente',
-                'Credito': 'Credito'
-                
-                
+                'Proveedor': 'IDVegaProveedor'
             }
+            
             try:
                 values = json.loads(valor_desde_array)
-                mongodb_query = {key_map[tabla]: {"$in": values}}
+                operator = "$in" if condicion == "IncluidoEn" else "$nin"
+                mongodb_query = {key_map[tabla]: {operator: values}}
             except json.JSONDecodeError:
                 print(f"Warning: Invalid JSON in ValorDesdeArray for {tabla}: {valor_desde_array}")
+        
+        # Manejo para fechas
         elif tabla == 'FechaEmision':
             try:
-                # Convertir directamente de dd/mm/yyyy a yyyy-mm-ddT00:00:00.000+00:00
                 day, month, year = valor_desde_array.split('/')
                 formatted_date = f"{year}-{month.zfill(2)}-{day.zfill(2)}T00:00:00.000+00:00"
                 if orden == 1:
@@ -359,35 +441,23 @@ def main():
         mongo_collection.create_index([("updatedAt", 1)])
         
         # Ejecutar la consulta para obtener la lista de IDBoni
-        idboni_list = execute_query(sql_connection, SQL_QUERY_IDBONI)
+        idboni_list = execute_query(sql_connection, SQL_QUERY_IDBONI, (1, '%%'))
         print(f"Total de IDBoni encontrados: {len(idboni_list)}")
+        
+        # Crear diccionario de información de IDBoni
+        idboni_info = {row['IDBoni']: {'CodigoPromocion': row['CodigoPromocion'], 'Descripcion': row['Descripcion']} for row in idboni_list}
         
         for idboni_row in idboni_list:
             idboni = idboni_row['IDBoni']
             print(f"\nProcesando IDBoni: {idboni}")
             
-            # Obtener información específica para este IDBoni
-            current_idboni_info_query = SQL_QUERY_IDBONI.replace("SELECT pkid AS IDBoni", f"SELECT pkid AS IDBoni, Codigo AS CodigoPromocion, Descripcion").replace("WHERE (Activo=1", f"WHERE pkid = {idboni} AND (Activo=1")
-            idboni_info_list = execute_query(sql_connection, current_idboni_info_query)
-            
-            if not idboni_info_list:
-                print(f"No se encontró información para IDBoni: {idboni}")
-                continue
-            
-            idboni_info = {idboni: {'CodigoPromocion': idboni_info_list[0]['CodigoPromocion'], 'Descripcion': idboni_info_list[0]['Descripcion']}}
-            print(f"Información de IDBoni: {idboni_info}")
-            
-            current_sql_query_1 = SQL_QUERY_1.replace("D.PKID = 600078873", f"D.PKID = {idboni}")
-            current_sql_query_2 = SQL_QUERY_2.replace("D.PKID = 600078873", f"D.PKID = {idboni}")
-            current_sql_query_3 = SQL_QUERY_3.replace("d.pkid = 600078873", f"d.pkid = {idboni}")
-            
-            results1 = execute_query(sql_connection, current_sql_query_1)
+            results1 = execute_query(sql_connection, SQL_QUERY_1, (idboni,))
             print(f"Resultados de SQL_QUERY_1: {len(results1)}")
             
-            results2 = execute_query(sql_connection, current_sql_query_2)
+            results2 = execute_query(sql_connection, SQL_QUERY_2, (idboni, idboni))
             print(f"Resultados de SQL_QUERY_2: {len(results2)}")
             
-            obsequios_results = execute_query(sql_connection, current_sql_query_3)
+            obsequios_results = execute_query(sql_connection, SQL_QUERY_3, (idboni,))
             print(f"Obsequios encontrados para IDBoni {idboni}: {len(obsequios_results)}")
             print("Detalle de obsequios sin procesar:")
             for obsequio in obsequios_results:
@@ -403,8 +473,8 @@ def main():
             
             # Process and merge results for this specific IDBoni
             merged_data = merge_results(
-                {idboni: processed_data1[idboni]} if processed_data1 else None,
-                {idboni: processed_data2[idboni]} if processed_data2 else {},
+                {idboni: processed_data1[idboni]} if processed_data1 and idboni in processed_data1 else None,
+                {idboni: processed_data2[idboni]} if processed_data2 and idboni in processed_data2 else {},
                 processed_obsequios,
                 idboni_info
             )

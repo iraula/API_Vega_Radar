@@ -124,8 +124,10 @@ where d.pkid = 600865766
 
 
 SQL_QUERY_IDBONI = """
-SELECT pkid AS IDBoni FROM DefinicionBonificacion
-WHERE (Activo=1 AND (Codigo LIKE '%%') AND Historico=0)
+
+SELECT pkid AS IDBoni,Codigo FROM DefinicionBonificacion
+WHERE (Activo=1 AND (Codigo LIKE '%AGO25 VAL LIM RETAIL 96%'))
+
 """
 
 

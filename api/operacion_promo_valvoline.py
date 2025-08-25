@@ -6,11 +6,9 @@ from pymongo import MongoClient
 from bson import json_util, ObjectId, CodecOptions
 import pytz
 
-
-
-# Database connection parameters
-SQL_SERVER = '192.168.2.72'
-SQL_DATABASE = 'valvolinerep'
+# Database connection parameters for SQL Server
+SQL_SERVER = '192.168.2.16'
+SQL_DATABASE = 'valvoline'
 SQL_USERNAME = 'Test10'
 SQL_PASSWORD = 'Peru2023'
 
@@ -20,9 +18,13 @@ MONGO_PORT = 27019
 MONGO_DATABASE = 'tradde-valvoline'
 MONGO_COLLECTION = 'Flex_Mongo_import_promo'
 
-# SQL queries (unchanged)
-SQL_QUERY_1 = """
+# SQL Queries
+SQL_QUERY_IDBONI = """
+SELECT pkid AS IDBoni, Codigo FROM DefinicionBonificacion
+WHERE (Activo=? AND (Codigo LIKE ?) AND Historico=0)
+"""
 
+SQL_QUERY_1 = """
 select 
     d.PKID as IDBoni,
     RTRIM(D.Codigo) AS CodigoPromocion,
@@ -37,25 +39,22 @@ select
         ELSE DDD.RutaCaracteristicaEstructural
     END AS TABLA,
     rtrim(DDD.ValorDesde) as ValorDesde,
-   case when rtrim(Ddd.condicion)='Entre' then rtrim(DDD.ValorHasta)
-   when rtrim(Ddd.condicion)='>=' then null else null
-     end as ValorHasta
-	,
-    '' as PorCada
+    case when rtrim(Ddd.condicion)='Entre' then rtrim(DDD.ValorHasta)
+    when rtrim(Ddd.condicion)='>=' then null else null
+    end as ValorHasta,
+    DDD.PorCada  
 FROM 
-    DefinicionDescuento2 D
+    DefinicionBonificacion D
 INNER JOIN 
-    DefinicionGrupoReglaDescuento DD ON DD.IDDefinicionDescuento2 = D.PKID
+    DefinicionGrupoReglaBonificacion DD ON DD.IDDefinicionBonificacion = D.PKID
 INNER JOIN 
-    DefinicionReglaDescuento2 DDD ON DDD.IDDefinicionGrupoReglaDescuento = DD.PKID
+    DefinicionReglaBonificacion DDD ON DDD.IDDefinicionGrupoReglaBonificacion = DD.PKID
 WHERE 
-    D.PKID = 600078873 and ddd.TieneReglaExclusion=1
-
-
+    D.PKID = ? and ddd.TieneReglaExclusion=1
 """
 
 SQL_QUERY_2 = """
-	WITH CTE AS (
+WITH CTE AS (
     SELECT  
         d.PKID AS IDBoni,
         DDD.PKID,
@@ -71,8 +70,8 @@ SQL_QUERY_2 = """
             THEN '[' + ISNULL(
                 STUFF(( 
                     SELECT ', ' + CONVERT(VARCHAR(100), DDDD.Clave)
-                    FROM DefinicionReglaDescuentoValorIncluidoEn DDDD
-                    WHERE DDDD.IDDefinicionReglaDescuento2 = DDD.PKID
+                    FROM DefinicionReglaBonificacionValorIncluidoEn DDDD
+                    WHERE DDDD.IDDefinicionReglaBonificacion = DDD.PKID
                     FOR XML PATH('')
                 ), 1, 2, ''), '') + ']'
             ELSE rtrim(DDD.ValorDesde)
@@ -86,47 +85,40 @@ SQL_QUERY_2 = """
                 ELSE rtrim(DDD.RutaCaracteristicaEstructural)
             END 
             ORDER BY DDD.PKID
-        ) AS Orden
+        ) AS Orden , rtrim(ddd.Condicion) as Condicion
     FROM 
-        DefinicionDescuento2 D
+        DefinicionBonificacion D
     INNER JOIN 
-        DefinicionGrupoReglaDescuento DD 
-        ON DD.IDDefinicionDescuento2 = D.PKID
+        DefinicionGrupoReglaBonificacion DD 
+        ON DD.IDDefinicionBonificacion = D.PKID
     INNER JOIN 
-        DefinicionReglaDescuento2 DDD 
-        ON DDD.IDDefinicionGrupoReglaDescuento = DD.PKID
+        DefinicionReglaBonificacion DDD 
+        ON DDD.IDDefinicionGrupoReglaBonificacion = DD.PKID
     WHERE 
-        D.PKID = 600078873 AND DDD.TieneReglaExclusion = 0
+        D.PKID = ? AND DDD.TieneReglaExclusion = 0
 )
 SELECT *
 FROM CTE
 ORDER BY TABLA, Orden;
 """
 
-
-# Add the new SQL query for Obsequios
 SQL_QUERY_3 = """
-select 
-d.PKID as IDBoni, rtrim(d.Codigo) as CodigoRegla, '' as CodigoObsequio,
-   null as IDVega, null as Producto,
-    null as IDUnidad, null as Cantidad, null as CantidadMaxima,
-    null as CantidadMaximaPorCliente, null as DesdeFecha,
-   null as HastaFecha, null as TieneStock, null as Stock,
-    null as TieneCantidadPorCliente, null as TieneCantidadMax,
-    null as Entregado, null as PorEntregar,d.PorcentajeDescuento  as Descuento ,'Descuento' as TipoBono
-
- from DefinicionDescuento2 d
-where d.pkid = 600078873
+select d.PKID as IDBoni, rtrim(d.Codigo) as CodigoRegla, '' as CodigoObsequio,
+    p.IDProducto as IDVega, rtrim(ps.Descripcion) as Producto,
+    p.IDUnidad as IDUnidad, p.Cantidad as Cantidad, p.CantidadMaxima as CantidadMaxima,
+    p.CantidadMaximaPorCliente as CantidadMaximaPorCliente, p.Desde as DesdeFecha,
+    p.Hasta as HastaFecha, p.TieneStock as TieneStock, p.Stock as Stock,
+    p.TieneCantidadPorCliente as TieneCantidadPorCliente, '' as TieneCantidadMax,
+    p.StockEntregado as Entregado, p.StockPorEntregar as PorEntregar, 'Obsequio' as TipoBono,
+    rtrim(u.Descripcion) as Unidad, rtrim(ps.Codigo) as CodigoProducto
+from ProductoObsequio2 p
+inner join DefinicionBonificacion d on d.PKID = p.IDDefinicionBonificacion
+inner join ProductoServicio ps on ps.PKID = p.IDProducto
+inner join unidad u on u.PKID = p.IDUnidad
+where d.pkid = ?
 """
 
-SQL_QUERY_IDBONI = """
-	
-
-	SELECT pkid AS IDBoni,rtrim(Codigo) as CodigoPromocion,rtrim(Descripcion) as Descripcion FROM DefinicionDescuento2
-WHERE (Activo=0 and codigo  like '%lim')
-"""
-
-# Custom JSON encoder to handle Decimal and ObjectId types
+# Custom JSON encoder
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, Decimal):
@@ -136,9 +128,7 @@ class CustomJSONEncoder(json.JSONEncoder):
         if isinstance(obj, datetime):
             return obj.isoformat()
         return super(CustomJSONEncoder, self).default(obj)
-        
-        
-        
+
 def connect_to_sql_database():
     conn_str = f'DRIVER={{SQL Server}};SERVER={SQL_SERVER};DATABASE={SQL_DATABASE};UID={SQL_USERNAME};PWD={SQL_PASSWORD}'
     return pyodbc.connect(conn_str)
@@ -148,16 +138,39 @@ def connect_to_mongodb():
     db = client[MONGO_DATABASE]
     return db[MONGO_COLLECTION]
 
-def execute_query(connection, query):
+def execute_query(connection, query, params=None):
     cursor = connection.cursor()
-    cursor.execute(query)
+    if params:
+        cursor.execute(query, params)
+    else:
+        cursor.execute(query)
     columns = [column[0] for column in cursor.description]
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
-def process_results_1(results):
-    if not results:
-        return None
+def upload_to_mongodb(data, collection):
+    try:
+        peru_timezone = pytz.timezone('America/Lima')
+        current_time = datetime.now(peru_timezone)
+        
+        collection_with_tz = collection.with_options(
+            codec_options=CodecOptions(tz_aware=True, tzinfo=peru_timezone)
+        )
+        
+        for item in data:
+            item['createdAt'] = current_time
+            item['updatedAt'] = current_time
+        
+        result = collection_with_tz.insert_many(data)
+        print(f"Successfully inserted {len(result.inserted_ids)} documents into MongoDB")
+        
+        for inserted_id in result.inserted_ids:
+            doc = collection_with_tz.find_one({"_id": inserted_id})
+            print(f"Inserted document timestamp: {doc['createdAt']}")
+    
+    except Exception as e:
+        print(f"An error occurred while uploading to MongoDB: {e}")
 
+def process_results_1(results):
     processed_data = {}
     for row in results:
         idboni = row['IDBoni']
@@ -175,9 +188,12 @@ def process_results_1(results):
         
         field_name = "CantidadProducto" if row['TABLA'] == "CantidadBase" else "PedidoTotal"
         
+        if valor_desde == 'Coleccion':
+            continue
+            
         if (valor_hasta == 0 or valor_hasta is None or valor_hasta == '') and (por_cada == 0 or por_cada is None or por_cada == ''):
             mongodb_query = {field_name: {"$gte": float(valor_desde)}}
-        elif valor_hasta != valor_desde and (por_cada == 0 or por_cada is None or por_cada == ''):
+        elif valor_hasta == valor_desde and (por_cada == 0 or por_cada is None or por_cada == ''):
             mongodb_query = {field_name: {"$gte": float(valor_desde), "$lte": float(valor_hasta)}}
         elif (valor_hasta == 0 or valor_hasta is None or valor_hasta == '') and por_cada and por_cada != 0:
             mongodb_query = {field_name: {"$gte": float(valor_desde)}, "PorCada": {"$ne": float(por_cada)}}
@@ -188,7 +204,7 @@ def process_results_1(results):
             processed_data[idboni]["QUERYMONGODB"]["$and"].append(mongodb_query)
     
     return processed_data
-    
+
 def process_results_2(results):
     processed_data = {}
     for row in results:
@@ -199,10 +215,17 @@ def process_results_2(results):
         tabla = row['TABLA']
         valor_desde_array = row['ValorDesdeArray']
         orden = row['Orden']
+        condicion = row['Condicion']
         
         mongodb_query = {}
         
-        if tabla in ['Producto', 'Sucursal', 'CategoriaCliente', 'FuerzaVentas', 'Responsable', 'Caracteristica21','Observacion','Marca','ClaseProductoServicio','Caracteristica27','Caracteristica28','Caracteristica29','Caracteristica30','Caracteristica22','Caracteristica23','Caracteristica24','Caracteristica25','Caracteristica26','Caracteristica20','Persona','Credito']:
+        if tabla in ['Producto', 'Sucursal', 'CategoriaCliente', 'FuerzaVentas', 'Responsable', 'Caracteristica21',
+                    'Observacion', 'Marca', 'ClaseProductoServicio', 'Caracteristica27', 'Caracteristica28',
+                    'Caracteristica29', 'Caracteristica30', 'Caracteristica22', 'Caracteristica23', 'Caracteristica24',
+                    'Caracteristica25', 'Caracteristica26', 'Caracteristica20', 'Persona','Caracteristica1','Caracteristica2','Caracteristica3',
+                    'Caracteristica4','Caracteristica5','Caracteristica6','Caracteristica7','Caracteristica8','Caracteristica9','Caracteristica10','Caracteristica11','Caracteristica12',
+                    'Caracteristica13','Caracteristica14','Caracteristica15','Caracteristica16','Caracteristica17','Caracteristica18','Caracteristica19','Caracteristica21','Caracteristica31',
+                    'Caracteristica32','Caracteristica33','Caracteristica34']:
             key_map = {
                 'Producto': 'IDVegaProducto',
                 'Sucursal': 'IDVegaSucursal',
@@ -224,18 +247,46 @@ def process_results_2(results):
                 'Caracteristica26': 'ClienteCaracteristica26',
                 'Caracteristica20': 'ClienteCaracteristica20',
                 'Persona': 'IDVegaCliente',
-                'Credito': 'Credito'
-                
-                
+                'Caracteristica1': 'ClienteCaracteristica1',
+                'Caracteristica2': 'ClienteCaracteristica2',
+                'Caracteristica3': 'ClienteCaracteristica3',
+                'Caracteristica4': 'ClienteCaracteristica4',
+                'Caracteristica5': 'ClienteCaracteristica5',
+                'Caracteristica6': 'ClienteCaracteristica6',
+                'Caracteristica7': 'ClienteCaracteristica7',
+                'Caracteristica8': 'ClienteCaracteristica8',
+                'Caracteristica9': 'ClienteCaracteristica9',
+                'Caracteristica10': 'ClienteCaracteristica10',
+                'Caracteristica11': 'ClienteCaracteristica11',
+                'Caracteristica12': 'ClienteCaracteristica12',
+                'Caracteristica13': 'ClienteCaracteristica13',
+                'Caracteristica14': 'ClienteCaracteristica14',
+                'Caracteristica15': 'ClienteCaracteristica15',
+                'Caracteristica16': 'ClienteCaracteristica16',
+                'Caracteristica17': 'ClienteCaracteristica17',
+                'Caracteristica18': 'ClienteCaracteristica18',
+                'Caracteristica19': 'ClienteCaracteristica19',
+                'Caracteristica31': 'ClienteCaracteristica31',
+                'Caracteristica32': 'ClienteCaracteristica32',
+                'Caracteristica33': 'ClienteCaracteristica33',
+                'Caracteristica34': 'ClienteCaracteristica34'
             }
             try:
                 values = json.loads(valor_desde_array)
-                mongodb_query = {key_map[tabla]: {"$in": values}}
+                operator = "$in" if condicion == "IncluidoEn" else "$nin"
+                mongodb_query = {key_map[tabla]: {operator: values}}
             except json.JSONDecodeError:
                 print(f"Warning: Invalid JSON in ValorDesdeArray for {tabla}: {valor_desde_array}")
-        elif tabla == 'FechaEmision':
+        
+        elif tabla == 'Credito':
+            valor_booleano = valor_desde_array.lower() == 'true'
+            if condicion == "=":
+                mongodb_query = {"Credito": valor_booleano}
+            elif condicion == "<>":
+                mongodb_query = {"Credito": {"$ne": valor_booleano}}
+        
+        elif tabla == 'Fecha':
             try:
-                # Convertir directamente de dd/mm/yyyy a yyyy-mm-ddT00:00:00.000+00:00
                 day, month, year = valor_desde_array.split('/')
                 formatted_date = f"{year}-{month.zfill(2)}-{day.zfill(2)}T00:00:00.000+00:00"
                 if orden == 1:
@@ -270,159 +321,71 @@ def process_obsequios(results):
             "TieneCantidadMax": row['TieneCantidadMax'],
             "Entregado": float(row['Entregado']) if row['Entregado'] is not None else None,
             "PorEntregar": float(row['PorEntregar']) if row['PorEntregar'] is not None else None,
-            "Descuento": float(row['Descuento']),
-            "TipoBono": row['TipoBono']
+            "Descuento": None,
+            "TipoBono": row['TipoBono'],
+            "CodigoProducto": row['CodigoProducto'],
+            "Unidad": row['Unidad']
         }
         obsequios.append(obsequio)
     return obsequios
 
-def merge_results(results1, results2, obsequios, idboni_info):
+def merge_results(results1, results2, obsequios):
     merged_data = []
-    
-    # Si results1 es None (no hay resultados de la primera consulta), inicializar con datos de results2
-    if results1 is None:
-        results1 = {idboni: {"QUERYMONGODB": {"$and": []}} for idboni in results2.keys()}
-    
     for idboni, data in results1.items():
         if idboni in results2:
             data["QUERYMONGODB"]["$and"].extend(results2[idboni]["QUERYMONGODB"]["$and"])
         
-        # Añadir Descripcion y CodigoPromocion desde idboni_info
-        data["Descripcion"] = idboni_info[idboni]["Descripcion"]
-        data["CodigoPromocion"] = idboni_info[idboni]["CodigoPromocion"]
+        # Add Obsequios array as a JSON string
+        data["Obsequios"] = json.dumps([obsequio for obsequio in obsequios if obsequio["CodigoRegla"] == data["CodigoPromocion"]], cls=CustomJSONEncoder)
         
-        # Filtrar obsequios para este registro específico
-        registro_obsequios = [obsequio for obsequio in obsequios if obsequio["CodigoRegla"] == data["CodigoPromocion"]]
-        
-        # Añadir array de Obsequios como una cadena JSON
-        data["Obsequios"] = json.dumps(registro_obsequios, cls=CustomJSONEncoder)
-        
-        # Convertir QUERYMONGODB a una cadena JSON
+        # Convert QUERYMONGODB to a JSON string
         data["QUERYMONGODB"] = json.dumps(data["QUERYMONGODB"], cls=CustomJSONEncoder)
         merged_data.append(data)
-    
-    # Si no hay resultados de ambas consultas, crear una entrada ficticia
-    if not merged_data:
-        merged_data.append({
-            "Descripcion": "",
-            "CodigoPromocion": "",
-            "QUERYMONGODB": json.dumps({"$and": []}),
-            "Obsequios": "[]"
-        })
-    
-    # Imprimir información de depuración
-    for item in merged_data:
-        print(f"Merged item:")
-        print(f"  CodigoPromocion: {item['CodigoPromocion']}")
-        print(f"  Obsequios: {item['Obsequios']}")
-    
     return merged_data
-
-def upload_to_mongodb(data, collection):
-    try:
-        # Define the timezone for Peru/Bogotá
-        peru_timezone = pytz.timezone('America/Lima')
-        
-        # Create a timezone-aware current time
-        current_time = datetime.now(peru_timezone)
-        
-        # Ensure the collection uses the Peru timezone
-        collection_with_tz = collection.with_options(
-            codec_options=CodecOptions(tz_aware=True, tzinfo=peru_timezone)
-        )
-        
-        for item in data:
-            item['createdAt'] = current_time
-            item['updatedAt'] = current_time
-        
-        result = collection_with_tz.insert_many(data)
-        print(f"Successfully inserted {len(result.inserted_ids)} documents into MongoDB")
-        
-        # Verify the inserted data
-        for inserted_id in result.inserted_ids:
-            doc = collection_with_tz.find_one({"_id": inserted_id})
-            print(f"Inserted document timestamp: {doc['createdAt']}")
-    
-    except Exception as e:
-        print(f"An error occurred while uploading to MongoDB: {e}")
 
 def main():
     sql_connection = None
     try:
         sql_connection = connect_to_sql_database()
+        mongo_collection = connect_to_mongodb()
         
-        mongo_client = MongoClient(MONGO_HOST, MONGO_PORT)
-        mongo_db = mongo_client[MONGO_DATABASE]
-        mongo_collection = mongo_db[MONGO_COLLECTION]
-        
+        # Crear índices para timestamps si no existen
         mongo_collection.create_index([("createdAt", 1)])
         mongo_collection.create_index([("updatedAt", 1)])
         
-        # Ejecutar la consulta para obtener la lista de IDBoni
-        idboni_list = execute_query(sql_connection, SQL_QUERY_IDBONI)
-        print(f"Total de IDBoni encontrados: {len(idboni_list)}")
+        # Parámetros para la consulta SQL_QUERY_IDBONI
+        activo = 1
+        codigo_filtro = '%AGO25 VAL LIM RETAIL 96%'
+        
+        # Obtener la lista de IDBoni
+        idboni_list = execute_query(sql_connection, SQL_QUERY_IDBONI, (activo, codigo_filtro))
         
         for idboni_row in idboni_list:
             idboni = idboni_row['IDBoni']
-            print(f"\nProcesando IDBoni: {idboni}")
+            print(f"Processing IDBoni: {idboni} - Codigo: {idboni_row['Codigo']}")
             
-            # Obtener información específica para este IDBoni
-            current_idboni_info_query = SQL_QUERY_IDBONI.replace("SELECT pkid AS IDBoni", f"SELECT pkid AS IDBoni, Codigo AS CodigoPromocion, Descripcion").replace("WHERE (Activo=1", f"WHERE pkid = {idboni} AND (Activo=1")
-            idboni_info_list = execute_query(sql_connection, current_idboni_info_query)
-            
-            if not idboni_info_list:
-                print(f"No se encontró información para IDBoni: {idboni}")
-                continue
-            
-            idboni_info = {idboni: {'CodigoPromocion': idboni_info_list[0]['CodigoPromocion'], 'Descripcion': idboni_info_list[0]['Descripcion']}}
-            print(f"Información de IDBoni: {idboni_info}")
-            
-            current_sql_query_1 = SQL_QUERY_1.replace("D.PKID = 600078873", f"D.PKID = {idboni}")
-            current_sql_query_2 = SQL_QUERY_2.replace("D.PKID = 600078873", f"D.PKID = {idboni}")
-            current_sql_query_3 = SQL_QUERY_3.replace("d.pkid = 600078873", f"d.pkid = {idboni}")
-            
-            results1 = execute_query(sql_connection, current_sql_query_1)
-            print(f"Resultados de SQL_QUERY_1: {len(results1)}")
-            
-            results2 = execute_query(sql_connection, current_sql_query_2)
-            print(f"Resultados de SQL_QUERY_2: {len(results2)}")
-            
-            obsequios_results = execute_query(sql_connection, current_sql_query_3)
-            print(f"Obsequios encontrados para IDBoni {idboni}: {len(obsequios_results)}")
-            print("Detalle de obsequios sin procesar:")
-            for obsequio in obsequios_results:
-                print(f"  CodigoRegla: {obsequio['CodigoRegla']}, Descuento: {obsequio['Descuento']}, TipoBono: {obsequio['TipoBono']}")
+            # Ejecutar consultas con el IDBoni como parámetro
+            results1 = execute_query(sql_connection, SQL_QUERY_1, (idboni,))
+            results2 = execute_query(sql_connection, SQL_QUERY_2, (idboni,))
+            obsequios_results = execute_query(sql_connection, SQL_QUERY_3, (idboni,))
             
             processed_data1 = process_results_1(results1)
             processed_data2 = process_results_2(results2)
             processed_obsequios = process_obsequios(obsequios_results)
-            print(f"Obsequios procesados para IDBoni {idboni}: {len(processed_obsequios)}")
-            print("Detalle de obsequios procesados:")
-            for obsequio in processed_obsequios:
-                print(f"  CodigoRegla: {obsequio['CodigoRegla']}, Descuento: {obsequio['Descuento']}, TipoBono: {obsequio['TipoBono']}")
             
-            # Process and merge results for this specific IDBoni
-            merged_data = merge_results(
-                {idboni: processed_data1[idboni]} if processed_data1 else None,
-                {idboni: processed_data2[idboni]} if processed_data2 else {},
-                processed_obsequios,
-                idboni_info
-            )
+            merged_data = merge_results(processed_data1, processed_data2, processed_obsequios)
             
             if merged_data:
+                # Subir los datos a MongoDB
                 upload_to_mongodb(merged_data, mongo_collection)
-                print(f"Datos fusionados para IDBoni {idboni}:")
-                for item in merged_data:
-                    print(f"  Registro: {item['CodigoPromocion']}")
-                    print(f"    Descripción: {item['Descripcion']}")
-                    print(f"    Obsequios: {item['Obsequios']}")
-                    print(f"    QUERYMONGODB: {item['QUERYMONGODB'][:100]}...")  # Mostramos solo los primeros 100 caracteres
+                
+                # Imprimir los datos subidos (para propósitos de depuración)
+                print(json.dumps(merged_data, indent=2, cls=CustomJSONEncoder))
             else:
-                print(f"No se generaron datos para IDBoni: {idboni}")
+                print(f"No data to upload for IDBoni: {idboni}")
             
     except Exception as e:
-        print(f"Ocurrió un error: {e}")
-        traceback.print_exc()  # Esto imprimirá el traceback completo del error
+        print(f"An error occurred: {e}")
     finally:
         if sql_connection:
             sql_connection.close()

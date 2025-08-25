@@ -9,15 +9,15 @@ import pytz
 
 
 # Database connection parameters
-SQL_SERVER = '192.168.2.72'
-SQL_DATABASE = 'valvolinerep'
+SQL_SERVER = '192.168.2.16'
+SQL_DATABASE = 'VegaTiendas'
 SQL_USERNAME = 'Test10'
 SQL_PASSWORD = 'Peru2023'
 
 # MongoDB connection parameters
 MONGO_HOST = '192.168.2.49'
-MONGO_PORT = 27019
-MONGO_DATABASE = 'tradde-valvoline'
+MONGO_PORT = 27021
+MONGO_DATABASE = 'tradde-vega-tiendas'
 MONGO_COLLECTION = 'Flex_Mongo_import_promo'
 
 # SQL queries (unchanged)
@@ -55,7 +55,7 @@ WHERE
 """
 
 SQL_QUERY_2 = """
-	WITH CTE AS (
+		WITH CTE AS (
     SELECT  
         d.PKID AS IDBoni,
         DDD.PKID,
@@ -86,7 +86,7 @@ SQL_QUERY_2 = """
                 ELSE rtrim(DDD.RutaCaracteristicaEstructural)
             END 
             ORDER BY DDD.PKID
-        ) AS Orden
+        ) AS Orden , rtrim(ddd.Condicion) as Condicion
     FROM 
         DefinicionDescuento2 D
     INNER JOIN 
@@ -97,10 +97,63 @@ SQL_QUERY_2 = """
         ON DDD.IDDefinicionGrupoReglaDescuento = DD.PKID
     WHERE 
         D.PKID = 600078873 AND DDD.TieneReglaExclusion = 0
-)
+
+UNION ALL
+
+SELECT  
+        d.PKID AS IDBoni,
+        DDD.PKID,
+        CASE 
+            WHEN CHARINDEX('/', RTRIM(DDD.RutaCaracteristicaEstructural)) > 0 
+            THEN SUBSTRING(RTRIM(DDD.RutaCaracteristicaEstructural), 
+                           LEN(RTRIM(DDD.RutaCaracteristicaEstructural)) - CHARINDEX('/', REVERSE(RTRIM(DDD.RutaCaracteristicaEstructural))) + 2, 
+                           LEN(RTRIM(DDD.RutaCaracteristicaEstructural)))
+            ELSE rtrim(DDD.RutaCaracteristicaEstructural)
+        END AS TABLA,
+        CASE
+            WHEN rtrim(DDD.ValorDesde) = 'Coleccion' 
+            THEN '[' + ISNULL(
+                STUFF(( 
+                    SELECT ', ' + CONVERT(VARCHAR(100), DDDD.Clave)
+                    FROM DefinicionReglaDescuentoValorIncluidoEn DDDD
+                    WHERE DDDD.IDDefinicionReglaDescuento2 = DDD.PKID
+                    FOR XML PATH('')
+                ), 1, 2, ''), '') + ']'
+            ELSE rtrim(DDD.ValorDesde)
+        END AS ValorDesdeArray,
+        ROW_NUMBER() OVER (PARTITION BY 
+            CASE 
+                WHEN CHARINDEX('/', RTRIM(DDD.RutaCaracteristicaEstructural)) > 0 
+                THEN SUBSTRING(RTRIM(DDD.RutaCaracteristicaEstructural), 
+                               LEN(RTRIM(DDD.RutaCaracteristicaEstructural)) - CHARINDEX('/', REVERSE(RTRIM(DDD.RutaCaracteristicaEstructural))) + 2, 
+                               LEN(RTRIM(DDD.RutaCaracteristicaEstructural)))
+                ELSE rtrim(DDD.RutaCaracteristicaEstructural)
+            END 
+            ORDER BY DDD.PKID
+        ) AS Orden , 
+		CASE WHEN rtrim(ddd.Condicion)='IncluidoEn' THEN 'IncluidoEn' 
+		WHEN rtrim(ddd.Condicion)='NoIncluidoEn' THEN 'NoIncluidoEn' END as Condicion
+    FROM 
+        DefinicionDescuento2 D
+    INNER JOIN 
+        DefinicionGrupoReglaDescuento DD 
+        ON DD.IDDefinicionDescuento2 = D.PKID
+    INNER JOIN 
+        DefinicionReglaDescuento2 DDD 
+        ON DDD.IDDefinicionGrupoReglaDescuento = DD.PKID
+    WHERE 
+        D.PKID = 600078873 AND DDD.TieneReglaExclusion = 1
+		and ( CASE 
+            WHEN CHARINDEX('/', RTRIM(DDD.RutaCaracteristicaEstructural)) > 0 
+            THEN SUBSTRING(RTRIM(DDD.RutaCaracteristicaEstructural), 
+                           LEN(RTRIM(DDD.RutaCaracteristicaEstructural)) - CHARINDEX('/', REVERSE(RTRIM(DDD.RutaCaracteristicaEstructural))) + 2, 
+                           LEN(RTRIM(DDD.RutaCaracteristicaEstructural)))
+            ELSE rtrim(DDD.RutaCaracteristicaEstructural)
+        END not in ('Total','CantidadBase') )
+) 
 SELECT *
 FROM CTE
-ORDER BY TABLA, Orden;
+ORDER BY TABLA, Orden
 """
 
 
@@ -121,9 +174,8 @@ where d.pkid = 600078873
 
 SQL_QUERY_IDBONI = """
 	
-
 	SELECT pkid AS IDBoni,rtrim(Codigo) as CodigoPromocion,rtrim(Descripcion) as Descripcion FROM DefinicionDescuento2
-WHERE (Activo=0 and codigo  like '%lim')
+WHERE (Activo=1 and codigo  like '%MAY-LEC-2025-08-179%')
 """
 
 # Custom JSON encoder to handle Decimal and ObjectId types
@@ -199,10 +251,51 @@ def process_results_2(results):
         tabla = row['TABLA']
         valor_desde_array = row['ValorDesdeArray']
         orden = row['Orden']
+        condicion = row['Condicion']
         
         mongodb_query = {}
         
-        if tabla in ['Producto', 'Sucursal', 'CategoriaCliente', 'FuerzaVentas', 'Responsable', 'Caracteristica21','Observacion','Marca','ClaseProductoServicio','Caracteristica27','Caracteristica28','Caracteristica29','Caracteristica30','Caracteristica22','Caracteristica23','Caracteristica24','Caracteristica25','Caracteristica26','Caracteristica20','Persona','Credito']:
+        # Manejo especial para Credito (booleano)
+        if tabla == 'Credito':
+            # Convertir string a booleano
+            valor_booleano = valor_desde_array.lower() == 'true'
+            
+            if condicion == "=":
+                mongodb_query = {"Credito": valor_booleano}
+            elif condicion == "<>":
+                mongodb_query = {"Credito": {"$ne": valor_booleano}}
+        
+        # Manejo para campos numéricos con operadores de comparación
+        elif tabla in ['Total', 'Observacion']:
+            try:
+                valor_numerico = float(valor_desde_array)
+                key_map = {
+                    'Total': 'TotalPedido',
+                    'Observacion': 'ObservacionPedido'
+                }
+                
+                if condicion == ">=":
+                    mongodb_query = {key_map[tabla]: {"$gte": valor_numerico}}
+                elif condicion == "<=":
+                    mongodb_query = {key_map[tabla]: {"$lte": valor_numerico}}
+                elif condicion == ">":
+                    mongodb_query = {key_map[tabla]: {"$gt": valor_numerico}}
+                elif condicion == "<":
+                    mongodb_query = {key_map[tabla]: {"$lt": valor_numerico}}
+                elif condicion == "=":
+                    mongodb_query = {key_map[tabla]: valor_numerico}
+                elif condicion == "<>":
+                    mongodb_query = {key_map[tabla]: {"$ne": valor_numerico}}
+            except ValueError:
+                print(f"Error: Unable to convert to numeric value: {valor_desde_array}")
+        
+        # Manejo para campos con arrays (IncluidoEn/NoIncluidoEn)
+        elif tabla in ['Producto', 'Sucursal', 'CategoriaCliente', 'FuerzaVentas', 'Responsable', 
+                       'Caracteristica21', 'Marca', 'ClaseProductoServicio', 'Caracteristica27',
+                       'Caracteristica28', 'Caracteristica29', 'Caracteristica30', 'Caracteristica22',
+                       'Caracteristica23', 'Caracteristica24', 'Caracteristica25', 'Caracteristica26',
+                       'Caracteristica20', 'Persona', 'Proveedor']:
+            
             key_map = {
                 'Producto': 'IDVegaProducto',
                 'Sucursal': 'IDVegaSucursal',
@@ -210,7 +303,6 @@ def process_results_2(results):
                 'FuerzaVentas': 'IDVegaFuerzaVenta',
                 'Responsable': 'IDVegaVendedor',
                 'Caracteristica21': 'ClienteCaracteristica21',
-                'Observacion': 'ObservacionPedido',
                 'Marca': 'IDVegaMarca',
                 'ClaseProductoServicio': 'IDVegaLinea',
                 'Caracteristica27': 'ClienteCaracteristica27',
@@ -224,18 +316,19 @@ def process_results_2(results):
                 'Caracteristica26': 'ClienteCaracteristica26',
                 'Caracteristica20': 'ClienteCaracteristica20',
                 'Persona': 'IDVegaCliente',
-                'Credito': 'Credito'
-                
-                
+                'Proveedor': 'IDVegaProveedor'
             }
+            
             try:
                 values = json.loads(valor_desde_array)
-                mongodb_query = {key_map[tabla]: {"$in": values}}
+                operator = "$in" if condicion == "IncluidoEn" else "$nin"
+                mongodb_query = {key_map[tabla]: {operator: values}}
             except json.JSONDecodeError:
                 print(f"Warning: Invalid JSON in ValorDesdeArray for {tabla}: {valor_desde_array}")
+        
+        # Manejo para fechas
         elif tabla == 'FechaEmision':
             try:
-                # Convertir directamente de dd/mm/yyyy a yyyy-mm-ddT00:00:00.000+00:00
                 day, month, year = valor_desde_array.split('/')
                 formatted_date = f"{year}-{month.zfill(2)}-{day.zfill(2)}T00:00:00.000+00:00"
                 if orden == 1:
